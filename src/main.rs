@@ -13,6 +13,8 @@ pub enum TokenKind {
     Delimiter,
     Whitespace,
     Comment,
+    EOF,
+    Error,
 }
 
 // https://users.rust-lang.org/t/how-to-print-enum-values/56663/3
@@ -29,6 +31,8 @@ impl Display for TokenKind {
             Self::Delimiter => write!(f, "Delimiter"),
             Self::Whitespace => write!(f, "Whitespace"),
             Self::Comment => write!(f, "Comment"),
+            Self::EOF => write!(f, "EOF"),
+            Self::Error => write!(f, "Error"),
         }
     }
 }
@@ -88,26 +92,26 @@ fn is_whitespace(c: char) -> bool {
     return c == ' ' || c == '\t' || c == '\n';
 }
 
-fn match_keyword(s: &str) -> &str {
+fn match_keyword(s: &str) -> Option<&str> {
     for &keyword in KEYWORDS.iter() {
         if s.starts_with(keyword) {
-            return keyword;
+            return Some(keyword);
         }
     }
-    return "";
+    return None;
 }
 
-fn match_identifier(s: &str) -> &str {
+fn match_identifier(s: &str) -> Option<&str> {
     let mut it = s.char_indices();
     // First char must be a letter
     match it.next() {
         Some((_, c)) => {
             if !is_letter(c) {
-                return "";
+                return None;
             }
         }
         None => {
-            return &s;
+            return None;
         }
     }
     // Rest of chars are either letters, digits or underscores '_'
@@ -115,59 +119,73 @@ fn match_identifier(s: &str) -> &str {
         match it.next() {
             Some((i, c)) => {
                 if !is_letter(c) && !is_digit(c) && c != '_' {
-                    return &s[0..i];
-                } else {
-                    continue;
-                }
+                    return Some(&s[0..i]);
+                } 
             }
+            // EOF
             None => {
-                return &s;
+                return Some(s);
             }
         }
     }
 }
 
-fn match_uint(s: &str) -> &str {
+fn match_uint(s: &str) -> Option<&str> {
     let mut it = s.char_indices();
     loop {
         match it.next() {
-            Some((i, c)) => {
+            Some((0, c)) => {
                 if !is_digit(c) {
-                    return &s[0..i];
+                    return None;
                 }
             }
-            // It will never reach here cause the EOF will match
+            Some((i, c)) => {
+                if !is_digit(c) {
+                    return Some(&s[0..i]);
+                }
+            }
+            // EOF
             None => {
-                return &s;
+                return Some(s);
             }
         }
     }
 }
 
-fn match_real(s: &str) -> &str {
+fn match_real(s: &str) -> Option<&str> {
     // Decimal part
-    let dec = match_uint(s);
-    let mut i = dec.len();
-    if i == 0 {
-        return "";
+    let dec: &str;
+    match match_uint(s) {
+        Some(d) => {
+            dec = d;
+        }
+        None => {
+            return None;
+        }
     }
+    let mut i = dec.len();
     // Check for the . separating decimal and fractional parts
     let mut rest_string = &s[i..];
     match rest_string.chars().next() {
         Some(c) => {
             if c != '.' {
-                return "";
+                return None;
             }
         }
         None => {
-            return "";
+            return None;
         }
     }
     i += 1;
     // Fractional part
-    let frac = match_uint(&s[i..]);
-    if frac.len() == 0 {
-        return "";
+    let frac: &str;
+    match match_uint(&s[i..]) {
+        Some(f) => {
+            frac = f;
+        }
+        None => {
+            return None;
+        }
     }
     i += frac.len();
     rest_string = &s[i..];
@@ -177,11 +195,11 @@ fn match_real(s: &str) -> &str {
         Some(c) => {
             // exponential part is optional so if no match then we return the previous
             if c != 'e' && c != 'E' {
-                return &s[0..i];
+                return Some(&s[0..i]);
             }
         }
         None => {
-            return &s[0..i];
+            return Some(&s[0..i]);
         }
     }
     // Suppose I match with 'e'
@@ -190,25 +208,33 @@ fn match_real(s: &str) -> &str {
     match it.next() {
         Some(c) => {
             if !is_digit(c) && c != '+' && c != '-' {
-                return &s[0..i - 1]; // maybe error?
+                return Some(&s[0..i - 1]); 
             } else if is_digit(c) {
                 digit = 1;
             }
         }
         None => {
-            return &s[0..i - 1]; // maybe error? - 123.45e -> (Real, "123.45") (Id, "e") so the parser will catch it
+            return Some(&s[0..i - 1]); // maybe error? - 123.45e -> (Real, "123.45") (Id, "e") so the parser will catch it
         }
     }
     i += 1;
-    rest_string = match_uint(&s[i..]);
-    if rest_string.len() + digit == 0 {
-        return &s[0..i - 2]; // maybe error?
-    } else {
-        i += rest_string.len();
-        return &s[0..i];
+    println!("After matching 'e' and optional sign, i = {}, rest_string = {}", i, &s[i..]);
+    match match_uint(&s[i..]) {
+        Some(exp_part) => {
+            i += exp_part.len();
+            return Some(&s[0..i]);
+        }
+        None => {
+            if digit == 0 {
+                return Some(&s[0..i - 2]); // maybe error?
+            } else {
+                return Some(&s[0..i]);
+            }
+        }
     }
 }
 
+// TODO: Make it return Option
 fn match_char(s: &str) -> &str {
     if !s.starts_with('\'') {
         return "";
@@ -246,6 +272,7 @@ fn match_char(s: &str) -> &str {
     }
 }
 
+// TODO: Make it return Option
 fn match_string(s: &str) -> &str {
     if !s.starts_with('\"') {
         return "";
@@ -280,37 +307,45 @@ fn match_string(s: &str) -> &str {
     }
 }
 
-fn match_operator(s: &str) -> &str {
+fn match_operator(s: &str) -> Option<&str> {
     for &operator in OPERATORS.iter() {
         if s.starts_with(operator) {
-            return operator;
+            return Some(operator);
         }
     }
-    return "";
+    return None;
 }
 
-fn match_delimiter(s: &str) -> &str {
+fn match_delimiter(s: &str) -> Option<&str> {
     for &delimiter in DELIMITERS.iter() {
         if s.starts_with(delimiter) {
-            return delimiter;
+            return Some(delimiter);
         }
     }
-    return "";
+    return None;
 }
 
-fn match_whitespace(s: &str) -> &str {
+fn match_whitespace(s: &str) -> Option<&str> {
     let mut it = s.char_indices();
     loop {
         match it.next() {
             Some((ind, c)) => {
                 if !is_whitespace(c) {
-                    return &s[0..ind];
+                    return Some(&s[0..ind]);
                 }
             }
             None => {
-                return &s[0..0];
+                return None;
             }
         }
+    }
+}
+
+fn match_eof(s: &str) -> Option<&str> {
+    if s.len() == 0 {
+        return Some("");
+    } else {
+        return None;
     }
 }
 
@@ -320,38 +355,86 @@ fn match_whitespace(s: &str) -> &str {
 fn next_token(src: &str) -> Token {
     // Order matters here!!!
     // It defines the priority level
-    let mut cur_token = (TokenKind::Identifier, match_identifier(src));
+    let mut cur_token: (TokenKind, &str) = (TokenKind::Error, "");
 
-    let keyword_lexeme = match_keyword(src);
-    if keyword_lexeme.len() > cur_token.1.len() {
-        cur_token = (TokenKind::Keyword, keyword_lexeme);
+    match match_eof(src) {
+        Some(eof_lexeme) => {
+            cur_token = (TokenKind::EOF, eof_lexeme);
+        }
+        None => {}
     }
 
-    let uint_lexeme = match_uint(src);
-    if uint_lexeme.len() > cur_token.1.len() {
-        cur_token = (TokenKind::Int, uint_lexeme);
+    match match_keyword(src) {
+        Some(keyword_lexeme) => {
+            if keyword_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Keyword, keyword_lexeme);
+            }
+        }
+        None => {}
     }
 
-    let operator_lexeme = match_operator(src);
-    if operator_lexeme.len() > cur_token.1.len() {
-        cur_token = (TokenKind::Operator, operator_lexeme);
+    match match_identifier(src) {
+        Some(identifier_lexeme) => {
+            if identifier_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Identifier, identifier_lexeme);
+            }
+        }
+        None => {}
     }
 
-    let delimiter_lexeme = match_delimiter(src);
-    if delimiter_lexeme.len() > cur_token.1.len() {
-        cur_token = (TokenKind::Delimiter, delimiter_lexeme);
+    match match_uint(src) {
+        Some(uint_lexeme) => {
+            if uint_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Int, uint_lexeme);
+            }
+        }
+        None => {}
     }
 
-    let whitespace_lexeme = match_whitespace(src);
-    if whitespace_lexeme.len() > cur_token.1.len() {
-        cur_token = (TokenKind::Whitespace, whitespace_lexeme);
+    match match_real(src) {
+        Some(real_lexeme) => {
+            if real_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Real, real_lexeme);
+            }
+        }
+        None => {}
     }
 
-    if cur_token.1.len() == 0 {
-        panic!("Lexer error");
+    match match_operator(src) {
+        Some(operator_lexeme) => {
+            if operator_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Operator, operator_lexeme);
+            }
+        }
+        None => {}
     }
 
-    return (cur_token.0, cur_token.1.to_string());
+    match match_delimiter(src) {
+        Some(delimiter_lexeme) => {
+            if delimiter_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Delimiter, delimiter_lexeme);
+            }
+        }
+        None => {}
+    }
+
+    match match_whitespace(src) {
+        Some(whitespace_lexeme) => {
+            if whitespace_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Whitespace, whitespace_lexeme);
+            }
+        }
+        None => {}
+    }
+
+    match cur_token.0 {
+        TokenKind::Error => {
+            // TODO: Return the line of the error
+            panic!("Lexer error: Unrecognized token starting with '{}'", src.chars().next().unwrap());
+        }
+        _ => { return (cur_token.0, cur_token.1.to_string()); }
+    }
+    
 }
 
 fn main() {
@@ -360,7 +443,12 @@ fn main() {
     let mut slice = &src[..];
     loop {
         let (token_kind, lexeme) = next_token(slice);
-        slice = &slice[lexeme.len()..];
         println!("TokenId: {}, Lexeme: {}", token_kind, lexeme);
+        match token_kind {
+            TokenKind::EOF => break,
+            _ => {}
+        }
+        slice = &slice[lexeme.len()..];
     }
+    println!("End of file reached");
 }
