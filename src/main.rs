@@ -218,7 +218,6 @@ fn match_real(s: &str) -> Option<&str> {
         }
     }
     i += 1;
-    println!("After matching 'e' and optional sign, i = {}, rest_string = {}", i, &s[i..]);
     match match_uint(&s[i..]) {
         Some(exp_part) => {
             i += exp_part.len();
@@ -305,6 +304,18 @@ fn match_string(s: &str) -> &str {
             }
         }
     }
+}
+
+fn match_comment(s: &str) -> Option<&str> {
+    if s.starts_with("(*") {
+        // Search for the closing tag in the remainder of the string
+        if let Some(idx) = s[2..].find("*)") {
+            // `idx` is relative to s[2..] so add two to compensate for the offset
+            // and another two to include *)
+            return Some(&s[0..idx + 4]); 
+        }
+    }
+    None
 }
 
 fn match_operator(s: &str) -> Option<&str> {
@@ -422,6 +433,15 @@ fn next_token(src: &str) -> Token {
         Some(whitespace_lexeme) => {
             if whitespace_lexeme.len() > cur_token.1.len() {
                 cur_token = (TokenKind::Whitespace, whitespace_lexeme);
+            }
+        }
+        None => {}
+    }
+
+    match match_comment(src) {
+        Some(comment_lexeme) => {
+            if comment_lexeme.len() > cur_token.1.len() {
+                cur_token = (TokenKind::Comment, comment_lexeme);
             }
         }
         None => {}
