@@ -95,7 +95,7 @@ fn is_letter(c: char) -> bool {
 }
 
 fn is_whitespace(c: char) -> bool {
-    return c == ' ' || c == '\t' || c == '\n';
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
 impl<'a> Lexer<'a> {
@@ -106,7 +106,6 @@ impl<'a> Lexer<'a> {
             column: 1,
         }
     }
-
 
     fn match_keyword(s: &str) -> Option<&str> {
         for &keyword in KEYWORDS.iter() {
@@ -136,7 +135,7 @@ impl<'a> Lexer<'a> {
                 Some((i, c)) => {
                     if !is_letter(c) && !is_digit(c) && c != '_' {
                         return Some(&s[0..i]);
-                    } 
+                    }
                 }
                 // EOF
                 None => {
@@ -224,7 +223,7 @@ impl<'a> Lexer<'a> {
         match it.next() {
             Some(c) => {
                 if !is_digit(c) && c != '+' && c != '-' {
-                    return Some(&s[0..i - 1]); 
+                    return Some(&s[0..i - 1]);
                 } else if is_digit(c) {
                     digit = 1;
                 }
@@ -250,10 +249,11 @@ impl<'a> Lexer<'a> {
     }
 
     // TODO: Make it return Option
-    fn match_char(s: &str) -> &str {
+    fn match_char(s: &str) -> Option<&str> {
         if !s.starts_with('\'') {
-            return "";
+            return None;
         }
+        // No other token starts with ' so we can panic
         let mut it = s[1..].char_indices();
         match it.next() {
             Some((_, c)) => {
@@ -262,7 +262,7 @@ impl<'a> Lexer<'a> {
                         Some((_, c)) => match c {
                             'n' | 't' | 'r' | '0' | '\\' | '\'' | '\"' => match it.next() {
                                 Some((j, c)) => match c {
-                                    '\'' => &s[0..j + 2],
+                                    '\'' => Some(&s[0..j + 2]),
                                     _ => panic!("Lexer error: Unterminated character literal"),
                                 },
                                 None => panic!("Lexer error: Unterminated character literal"),
@@ -273,10 +273,14 @@ impl<'a> Lexer<'a> {
                     }
                 } else if c == '\'' {
                     panic!("Lexer error: empty character literal");
+                } else if c == '\"' {
+                    panic!(
+                        "Lexer error: character literal cannot contain an unescaped double quote"
+                    );
                 } else {
                     match it.next() {
                         Some((j, c)) => match c {
-                            '\'' => &s[0..j + 2],
+                            '\'' => Some(&s[0..j + 2]),
                             _ => panic!("Lexer error: Unterminated character literal"),
                         },
                         None => panic!("Lexer error: Unterminated character literal"),
@@ -288,35 +292,40 @@ impl<'a> Lexer<'a> {
     }
 
     // TODO: Make it return Option
-    fn match_string(s: &str) -> &str {
+    fn match_string(s: &str) -> Option<&str> {
         if !s.starts_with('\"') {
-            return "";
+            return None;
         }
+        // No other token starts with " so we can panic
         let mut it = s[1..].char_indices();
         let mut escaped = false;
         loop {
             match it.next() {
                 Some((i, c)) => {
+                    if c == '\n' {
+                        panic!("Lexer error: String literal cannot span multiple lines");
+                    }
                     if !escaped {
                         match c {
                             '\\' => escaped = true,
-                            '\"' => return &s[0..i + 2],
+                            '\"' => return Some(&s[0..i + 2]),
+                            '\'' => {
+                                panic!("Lexer error: String literal cannot contain a single quote");
+                            }
                             _ => {}
                         }
                     } else {
                         match c {
-                            'n' => {}
-                            't' => {}
-                            'r' => {}
-                            '\\' => {}
-                            '\"' => {}
-                            _ => {}
+                            'n' | 't' | 'r' | '0' | '\\' | '\'' | '\"' => {}
+                            _ => {
+                                panic!("Lexer Error: Invalid escape sequence");
+                            }
                         }
                         escaped = false;
                     }
                 }
                 None => {
-                    panic!("Unterminated character literal");
+                    panic!("Lexer Error: Unterminated character literal");
                 }
             }
         }
@@ -328,7 +337,7 @@ impl<'a> Lexer<'a> {
             if let Some(idx) = s[2..].find("*)") {
                 // `idx` is relative to s[2..] so add two to compensate for the offset
                 // and another two to include *)
-                return Some(&s[0..idx + 4]); 
+                return Some(&s[0..idx + 4]);
             }
         }
         None
@@ -361,8 +370,9 @@ impl<'a> Lexer<'a> {
                         return Some(&s[0..ind]);
                     }
                 }
+                // This only happens in case of trailing whitespaces
                 None => {
-                    return None;
+                    return Some(&s[0..]);
                 }
             }
         }
@@ -426,6 +436,24 @@ impl<'a> Lexer<'a> {
             None => {}
         }
 
+        match Self::match_char(src) {
+            Some(char_lexeme) => {
+                if char_lexeme.len() > cur_token.1.len() {
+                    cur_token = (TokenKind::Char, char_lexeme);
+                }
+            }
+            None => {}
+        }
+
+        match Self::match_string(src) {
+            Some(string_lexeme) => {
+                if string_lexeme.len() > cur_token.1.len() {
+                    cur_token = (TokenKind::String, string_lexeme);
+                }
+            }
+            None => {}
+        }
+
         match Self::match_operator(src) {
             Some(operator_lexeme) => {
                 if operator_lexeme.len() > cur_token.1.len() {
@@ -465,9 +493,13 @@ impl<'a> Lexer<'a> {
         match cur_token.0 {
             TokenKind::Error => {
                 // TODO: Return the line and column of the error
-                panic!("{}:{}\n
+                panic!(
+                    "{}:{}\n
                 Lexer error: Unrecognized token starting with '{}'",
-                 self.line, self.column, src.chars().next().unwrap());
+                    self.line,
+                    self.column,
+                    src.chars().next().unwrap()
+                );
             }
             _ => {
                 let lexeme = cur_token.1;
@@ -497,7 +529,10 @@ fn main() {
         line = lexer.line;
         column = lexer.column;
         let (token_kind, lexeme) = lexer.next_token();
-        println!("{}:{} TokenId: {}, Lexeme: {}", line, column, token_kind, lexeme);
+        println!(
+            "{}:{} TokenId: {}, Lexeme: {}",
+            line, column, token_kind, lexeme
+        );
         match token_kind {
             TokenKind::EOF => break,
             _ => {}
