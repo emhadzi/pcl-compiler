@@ -378,116 +378,38 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn match_eof(s: &str) -> Option<&str> {
-        if s.len() == 0 {
-            return Some("");
-        } else {
-            return None;
-        }
-    }
-
     /// Returns the token found at the beginning of the slice and advances it
     fn next_token(&mut self) -> Token {
         let src = self.slice;
-        // Order matters here!!!
-        // It defines the priority level
+
+        if src.is_empty() {
+            return (TokenKind::EOF, String::new());
+        }
+
         let mut cur_token: (TokenKind, &str) = (TokenKind::Error, "");
 
-        match Self::match_eof(src) {
-            Some(eof_lexeme) => {
-                cur_token = (TokenKind::EOF, eof_lexeme);
-            }
-            None => {}
-        }
+        let matches = [
+            (Self::match_keyword(src), TokenKind::Keyword),
+            (Self::match_identifier(src), TokenKind::Identifier),
+            (Self::match_uint(src), TokenKind::Int),
+            (Self::match_real(src), TokenKind::Real),
+            (Self::match_char(src), TokenKind::Char),
+            (Self::match_string(src), TokenKind::String),
+            (Self::match_operator(src), TokenKind::Operator),
+            (Self::match_delimiter(src), TokenKind::Delimiter),
+            (Self::match_whitespace(src), TokenKind::Whitespace),
+            (Self::match_comment(src), TokenKind::Comment),
+        ];
 
-        match Self::match_keyword(src) {
-            Some(keyword_lexeme) => {
-                if keyword_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Keyword, keyword_lexeme);
+        for (match_fn, kind) in matches {
+            match match_fn {
+                Some(lexeme) => {
+                    if lexeme.len() > cur_token.1.len() {
+                        cur_token = (kind, lexeme);
+                    }
                 }
+                None => {}
             }
-            None => {}
-        }
-
-        match Self::match_identifier(src) {
-            Some(identifier_lexeme) => {
-                if identifier_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Identifier, identifier_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_uint(src) {
-            Some(uint_lexeme) => {
-                if uint_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Int, uint_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_real(src) {
-            Some(real_lexeme) => {
-                if real_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Real, real_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_char(src) {
-            Some(char_lexeme) => {
-                if char_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Char, char_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_string(src) {
-            Some(string_lexeme) => {
-                if string_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::String, string_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_operator(src) {
-            Some(operator_lexeme) => {
-                if operator_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Operator, operator_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_delimiter(src) {
-            Some(delimiter_lexeme) => {
-                if delimiter_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Delimiter, delimiter_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_whitespace(src) {
-            Some(whitespace_lexeme) => {
-                if whitespace_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Whitespace, whitespace_lexeme);
-                }
-            }
-            None => {}
-        }
-
-        match Self::match_comment(src) {
-            Some(comment_lexeme) => {
-                if comment_lexeme.len() > cur_token.1.len() {
-                    cur_token = (TokenKind::Comment, comment_lexeme);
-                }
-            }
-            None => {}
         }
 
         match cur_token.0 {
@@ -519,6 +441,7 @@ impl<'a> Lexer<'a> {
         }
     }
 }
+
 fn main() {
     let mut src = String::new();
     std::io::stdin().read_to_string(&mut src).unwrap();
