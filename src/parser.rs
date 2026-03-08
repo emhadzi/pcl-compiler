@@ -9,13 +9,29 @@ pub struct Parser<'a> {
 
 enum Local {}
 
+enum Header {
+    Procedure {
+        name: String,
+        args: Vec<Box<Formal>>,
+    },
+    Function {
+        name: String,
+        args: Vec<Box<Formal>>,
+        ret: Box<Type>,
+    },
+}
+
+struct Formal {}
+
+enum Type {}
+
 enum Expr {}
 
 enum Stmt {}
 
 struct Call {
     id: String,
-    exprs: Vec<Expr>,
+    exprs: Vec<Box<Expr>>,
 }
 
 struct Block {
@@ -23,7 +39,7 @@ struct Block {
 }
 
 struct Body {
-    locals: Vec<Local>,
+    locals: Vec<Box<Local>>,
     block: Box<Block>,
 }
 
@@ -58,10 +74,13 @@ impl<'a> Parser<'a> {
     // Consumes and return the token on success, returns error string on failure
     pub fn expect(
         &mut self,
-        expected_tok_kind: &TokenKind,
+        expected_tok_kind: TokenKind,
         expected_str: Option<&str>,
-    ) -> Result<&Token, String> {
+    ) -> Result<Token, String> {
         let (curr_tok_kind, curr_tok_str) = self.peek().unwrap();
+        let curr_tok_kind = curr_tok_kind.clone();
+        let curr_tok_str = curr_tok_str.clone();
+
         if curr_tok_kind != expected_tok_kind {
             return Err(format!(
                 "Syntax error: Expected '{:?}', found '{:?}'",
@@ -71,7 +90,7 @@ impl<'a> Parser<'a> {
         match expected_str {
             Some(expected_str) => {
                 if curr_tok_str.as_str() == expected_str {
-                    Ok(self.advance().unwrap())
+                    Ok(self.advance().unwrap().clone())
                 } else {
                     Err(format!(
                         "Syntax error: Expected '{:?}', but found '{:?}'",
@@ -80,7 +99,7 @@ impl<'a> Parser<'a> {
                     ))
                 }
             }
-            None => Ok(self.advance().unwrap()),
+            None => Ok(self.advance().unwrap().clone()),
         }
     }
 
@@ -110,16 +129,112 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_body(&mut self) -> Result<Body, String> {
-        while self.peek()?.1 == "(" {
-            self.advance();
-            let cur_local = Box::new(self.parse_local()?);
-            let
+        let mut locals: Vec<Box<Local>> = Vec::new();
+        loop {
+            match self.parse_local() {
+                Ok(res) => {
+                    locals.push(Box::new(res));
+                }
+                Err(_) => {
+                    break;
+                }
+            }
         }
-        
+        let block = Box::new(self.parse_block()?);
+
+        return Ok(Body {
+            locals: locals,
+            block: block,
+        });
     }
-    
-    fn parse_local(&mut self) -> Result<Local, String> {
-        
+
+    fn parse_local(&mut self) -> Result<Local, String> { todo!() }
+
+    fn parse_header(&mut self) -> Result<Header, String> {
+        let mut is_func = false;
+        match self.advance() {
+            Some((TokenKind::Keyword, s)) => {
+                if s == "function" {
+                    is_func = true;
+                } else if s != "procedure" {
+                    return Err(format!(
+                        "Syntax error: expected \"function\" or \"procedure\", found \"{}\"",
+                        s
+                    ));
+                }
+            }
+            _ => {
+                return Err("Syntax error: expected \"function\" or \"procedure\"".to_string());
+            }
+        }
+
+        let name = self.expect(TokenKind::Identifier, None)?;
+        self.expect(TokenKind::Delimiter, Some("("))?;
+
+        let mut args: Vec<Box<Formal>> = Vec::new();
+        args.push(Box::new(self.parse_formal()?));
+
+        loop {
+            if let Err(_) = self.expect(TokenKind::Delimiter, Some(";")) {
+                break;
+            }
+            match self.parse_formal() {
+                Ok(formal) => {
+                    args.push(Box::new(formal));
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+
+        self.expect(TokenKind::Delimiter, Some(")"))?;
+
+        if is_func {
+            self.expect(TokenKind::Delimiter, Some(":"))?;
+            let ret = Box::new(self.parse_type()?);
+            return Ok(Header::Function {
+                name: name.1,
+                args,
+                ret,
+            });
+        }
+
+        return Ok(Header::Procedure {
+            name: name.1,
+            args,
+        });
     }
-    
+
+    fn parse_block(&mut self) -> Result<Block, String> { todo!() }
+    fn parse_formal(&mut self) -> Result<Formal, String> { todo!() }
+    fn parse_type(&mut self) -> Result<Type, String> { todo!() }
+
+    fn parse_call(&mut self) -> Result<Call, String> {
+        let id = self.expect(TokenKind::Identifier, None)?;
+        self.expect(TokenKind::Delimiter, Some("("))?;
+        let mut exprs: Vec<Box<Expr>> = Vec::new();
+        loop {
+            match self.parse_expr() {
+                Ok(expr) => {
+                    exprs.push(Box::new(expr));
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+            match self.expect(TokenKind::Delimiter, Some(",")) {
+                Ok(_) => {}
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::Delimiter, Some(")"));
+
+        return Ok(Call {
+            id: id.1,
+            exprs: exprs,
+        });
+    }
 }
